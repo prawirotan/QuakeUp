@@ -6,46 +6,31 @@ library(leaflet)
 library(dplyr)
 library(leaflet.extras)
 library(shinyWidgets)
-library(fixerapi)
-library(randomForest)
-library(RCurl)
 library(data.table)
-require(caTools)
+library(rvest)
+library(lubridate)
+library(htmltools)
+library(taskscheduleR)
 
-setwd("./IndoEveryDayDataLengkap-30NEW/10Data")
-fnames <- list.files(pattern="*.csv")
-csv <- lapply(fnames, read.csv)
-data <- do.call(rbind, csv)
-Sys.setenv(FIXER_API_KEY='cf24b3b8a8588c80c7dfcac67bc35709')
-mydata<-fixer_latest()
-summary(data)
+myscript <- system.file("extdata", "earthquake.R", package = "taskscheduleR")
 
-#FETCHING DATA FROM THE SERVER (BMKG)
-mydat <- fread('https://www.bmkg.go.id/gempabumi/gempabumi-terkini.bmkg')
-head(mydat)
+taskscheduler_create(taskname = "update_BMKG_12HRS", rscript = myscript,
+                     schedule = "HOURLY", starttime = "00:00", modifier = 12)
 
-#RANDOM_FOREST
-set.seed(100)
-train <- sample(nrow(data), 0.7*nrow(data), replace = FALSE)
-TrainSet <- data[train,]
-ValidSet <- data[-train,]
-summary(TrainSet)
-summary(ValidSet)
-dim(data)
+setwd("D:/Documents/Coding/QuakeUpV2Final")
+#FETCHING CURRENT DATA
+url <- 'https://www.bmkg.go.id/gempabumi/gempabumi-terkini.bmkg'
 
-modelMag <- randomForest(MAG ~ ., data = TrainSet, importance = TRUE)
-modelMag
-modelKedalaman <- randomForest(KEDALAMAN ~ ., data = TrainSet, importance = TRUE)
-modelLongitude <- randomForest(LONGITUDE ~ ., data = TrainSet, importance = TRUE)
-modelLatitude <- randomForest(LATITUDE ~ ., data = TrainSet, importance = TRUE)
+out_df <- url %>% read_html() %>% html_table() %>% .[[1]]
+head(out_df)
+write.csv(out_df, 'current_earthquake_data.csv', row.names = FALSE)
 
-predTrain <- predict(modelMag, TrainSet, type = "class")
-table(predTrain, TrainSet$MAG)
+data <- read.csv('current_earthquake_data.csv')
 
 #EARTHQUAKE
-data$depth_type <-  ifelse(data$KEDALAMAN <= 70, "shallow", 
-                           ifelse(data$KEDALAMAN <= 300 | data$KEDALAMAN >70, "intermediate", 
-                                  ifelse(data$KEDALAMAN > 300, "deep", "other")))
+data$depth_type <-  ifelse(data$Kedalaman <= 70, "shallow", 
+                           ifelse(data$Kedalaman <= 300 | out_df$KEDALAMAN >70, "intermediate", 
+                                  ifelse(data$Kedalaman > 300, "deep", "other")))
 
 
 #CONVERT MONEY
@@ -169,7 +154,7 @@ shiny::shinyApp(
         #define the color pallate for the magnitidue of the earthquake
         pal <- colorNumeric(
             palette = c('gold', 'orange', 'dark orange', 'orange red', 'red', 'dark red'),
-            domain = data$MAG)
+            domain = data$Magnitudo)
         
         #define the color of for the depth of the earquakes
         pal2 <- colorFactor(
@@ -181,9 +166,9 @@ shiny::shinyApp(
         output$mymap <- renderLeaflet({
             leaflet(data, width="1000", height="1000") %>% 
                 setView(lng =  113.9213257, lat = -0.789275, zoom = 4.5)  %>% #setting the view over ~ center of Indonesia
-                addTiles() %>% 
+                addTiles() %>%
                 addFullscreenControl() %>% 
-                addCircles(data = data, lat = ~ LATITUDE, lng = ~ LONGITUDE, weight = 1, radius = ~sqrt(MAG)*25000, popup = ~as.character(MAG), label = ~as.character(paste0("Magnitude: ", sep = " ", MAG)), color = ~pal(MAG), fillOpacity = 0.5)
+                addCircles(data = data, lat = ~ Lintang, lng = ~ Bujur, weight = 1, radius = ~sqrt(Magnitudo)*25000, popup = paste0("Wilayah: ", data$Wilayah, "<br>", "Lintang: ", data$Lintang, "<br>", "Bujur: ", data$Bujur, "<br>", "Kedalaman: ", data$Kedalaman, "<br>", "Waktu Gempa: ", data$Waktu.Gempa, "<br>", "Magnitudo: ", data$Magnitudo), label = ~as.character(paste0("Magnitude: ", sep = " ", Magnitudo)), color = ~pal(Magnitudo), fillOpacity = 0.5)
         })
         
         #create the text output
@@ -194,7 +179,7 @@ shiny::shinyApp(
             proxy <- leafletProxy("mymap", data = data)
             proxy %>% clearMarkers()
             if (input$markers) {
-                proxy %>% addCircleMarkers(stroke = FALSE, color = ~pal2(depth_type), fillOpacity = 0.2,      label = ~as.character(paste0("Magnitude: ", sep = " ", MAG))) %>%
+                proxy %>% addCircleMarkers(stroke = FALSE, color = ~pal2(depth_type), fillOpacity = 0.2, label = ~as.character(paste0("Magnitude: ", sep = " ", Magnitudo))) %>%
                     addLegend("bottomright", pal = pal2, values = data$depth_type,
                               title = "Depth Type",
                               opacity = 1)}
@@ -207,7 +192,7 @@ shiny::shinyApp(
             proxy <- leafletProxy("mymap", data = data)
             proxy %>% clearMarkers()
             if (input$heat) {
-                proxy %>%  addHeatmap(lng=~LONGITUDE, lat=~LATITUDE, intensity = ~MAG, blur =  10, max = 0.05, radius = 15) 
+                proxy %>%  addHeatmap(lng=~Bujur, lat=~Lintang, intensity = ~Magnitudo, blur =  10, max = 0.05, radius = 15) 
             }
             else{
                 proxy %>% clearHeatmap()
